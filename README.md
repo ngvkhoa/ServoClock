@@ -36,18 +36,12 @@ Hệ thống đồng hồ cơ khí 4 chữ số 7 đoạn (HH:MM) hiển thị t
 Mỗi chữ số sử dụng 7 kênh tương ứng với 7 nét `a, b, c, d, e, f, g`. Kênh 7 và 8 trên mỗi board được bỏ trống.
 
 
-```
-
-```
    [   Board 0x40 (GIỜ)   ]          [   Board 0x41 (PHÚT)  ]
  ┌─────────────┬─────────────┐     ┌─────────────┬─────────────┐
  │  Chục Giờ   │ Đơn vị Giờ  │     │  Chục Phút  │ Đơn vị Phút │
  │ (Kênh 9-15) │ (Kênh 0-6)  │     │ (Kênh 9-15) │ (Kênh 0-6)  │
  └─────────────┴─────────────┘     └─────────────┴─────────────┘
 
-```
-
-```
 
 #### Chi tiết gán chân từng nét:
 | Nét LED | Index | Kênh (Số Hàng Đơn Vị) | Kênh (Số Hàng Chục) | Góc Mở (`ON`) | Góc Đóng (`OFF`) |
