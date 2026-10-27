@@ -1,5 +1,3 @@
-Dưới đây là mẫu file `README.md` hoàn chỉnh, chuẩn kỹ thuật phần cứng và phần mềm cho dự án đồng hồ servo 7 đoạn của bạn:
-
 # 7-Segment Mechanical Servo Clock (4 Digits)
 
 Hệ thống đồng hồ cơ khí 4 chữ số 7 đoạn (HH:MM) hiển thị theo chuẩn 24 giờ, sử dụng **28 động cơ servo SG90/MG90S** điều khiển từng nét hiển thị riêng biệt. Dự án tích hợp module thời gian thực **RTC DS3231**, 2 mạch mở rộng **PCA9685 16-Channel PWM**, cùng còi **Buzzer** phát chuông kinh điển Westminster Quarters tại các mốc giờ cố định.
