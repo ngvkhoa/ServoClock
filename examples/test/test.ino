@@ -1,7 +1,12 @@
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
+#include <RTClib.h>
 
-Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
+// Khởi tạo 2 board PCA9685 theo đúng địa chỉ quét được
+Adafruit_PWMServoDriver pwm1 = Adafruit_PWMServoDriver(0x40); // 2 chữ số giờ (trái)
+Adafruit_PWMServoDriver pwm2 = Adafruit_PWMServoDriver(0x41); // 2 chữ số phút (phải)
+
+RTC_DS3231 rtc;
 
 #define SERVO_FREQ 50
 
@@ -9,17 +14,14 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
 const uint16_t PULSE_MIN = 102; // ~0 độ
 const uint16_t PULSE_MAX = 512; // ~180 độ
 
-// Cấu hình góc cho từng thanh: a, b, c, d, e, f, g
-// Index:  0=a,  1=b,  2=c,  3=d,  4=e,  5=f,  6=g
-// Nét 2 (c) và 5 (f) mở ở 180 độ; các nét còn lại mở ở 90 độ. Đóng toàn bộ ở 0 độ.
-const uint8_t ANGLE_ON[7]  = { 90,  90,  90,  90,  90, 90,  90};
-const uint8_t ANGLE_OFF[7] = {  0,   0,   180,   180,   0,   180,   0};
+// Cấu hình góc cho từng thanh: a, b, c, d, e, f, g (index 0 đến 6)
+// Nét 2 (c), 3 (d), và 5 (f) mở ở 180 độ; các nét khác mở ở 90 độ. Đóng toàn bộ ở 0 độ.
+const uint8_t ANGLE_ON[7]  = { 90,  90, 180, 180,  90, 180,  90};
+const uint8_t ANGLE_OFF[7] = {  0,   0,   0,   0,   0,   0,   0};
 
-// Kênh vật lý tương ứng 7 đoạn cho từng chữ số trên board 0x40
-// HÀNG CHỤC (Chữ số bên trái): kênh 9 - 15
-const uint8_t DIGIT_TENS_CH[7]  = {9, 10, 11, 12, 13, 14, 15};
-// HÀNG ĐƠN VỊ (Chữ số bên phải): kênh 0 - 6
-const uint8_t DIGIT_UNITS_CH[7] = {0,  1,  2,  3,  4,  5,  6};
+// Kênh vật lý tương ứng 7 đoạn cho từng chữ số trên mỗi board
+const uint8_t DIGIT_TENS_CH[7]  = {9, 10, 11, 12, 13, 14, 15}; // Hàng chục (bên trái)
+const uint8_t DIGIT_UNITS_CH[7] = {0,  1,  2,  3,  4,  5,  6};  // Hàng đơn vị (bên phải)
 
 // Bảng mã 7 đoạn số 0 - 9 (Bit: g f e d c b a)
 const uint8_t NUM_MAP[10] = {
@@ -61,65 +63,117 @@ uint8_t getCharPattern(char c) {
   }
 }
 
-// Điều khiển một thanh cụ thể (segIndex: 0=a, 1=b, ..., 6=g)
-void driveSegment(const uint8_t* pinMap, uint8_t segIndex, bool state) {
+// Điều khiển một thanh cụ thể trên board và kênh chỉ định
+void driveSegment(Adafruit_PWMServoDriver &board, const uint8_t* pinMap, uint8_t segIndex, bool state) {
   uint8_t angle = state ? ANGLE_ON[segIndex] : ANGLE_OFF[segIndex];
-  pwm.setPWM(pinMap[segIndex], 0, angleToPulse(angle));
+  board.setPWM(pinMap[segIndex], 0, angleToPulse(angle));
 }
 
-// Điều khiển chữ số theo quy trình: Reset ngoài -> Chỉnh g -> Dựng ngoài
-// digit: 0 là Hàng chục (9-15), 1 là Hàng đơn vị (0-6)
-void displayCharSafeSequence(uint8_t digit, char c) {
+// Điều khiển 1 chữ số theo quy trình an toàn 3 bước: Reset ngoài -> Chỉnh g -> Dựng ngoài
+void displayCharSafeSequence(Adafruit_PWMServoDriver &board, uint8_t digit, char c) {
   uint8_t pattern = getCharPattern(c);
   const uint8_t* pinMap = (digit == 0) ? DIGIT_TENS_CH : DIGIT_UNITS_CH;
 
-  // BƯỚC 1: Dọn đường - Thu toàn bộ 6 nét ngoài (a -> f) về vị trí đóng (0 độ)
+  // BƯỚC 1: Dọn đường - Thu toàn bộ 6 nét ngoài (a -> f) về 0 độ
   for (uint8_t s = 0; s < 6; s++) {
-    driveSegment(pinMap, s, false);
+    driveSegment(board, pinMap, s, false);
   }
-  delay(80); // Đợi các nét ngoài dạt hẳn vào trong
+  delay(60); // Đợi các nét ngoài dạt vào
 
-  // BƯỚC 2: Đưa nét g (index 6) về trạng thái đích của số mới
+  // BƯỚC 2: Chỉnh nét g (index 6) theo số mới
   bool state_g = (pattern >> 6) & 0x01;
-  driveSegment(pinMap, 6, state_g);
-  delay(80); // Đợi nét g cố định vị trí
+  driveSegment(board, pinMap, 6, state_g);
+  delay(60); // Đợi nét g cố định
 
   // BƯỚC 3: Dựng 6 nét ngoài (a -> f) theo đúng số mới
   for (uint8_t s = 0; s < 6; s++) {
     bool state = (pattern >> s) & 0x01;
-    driveSegment(pinMap, s, state);
+    driveSegment(board, pinMap, pinMap == DIGIT_TENS_CH ? s : s, state); // sửa gọn tham số
+    // Hoặc viết tường minh:
+    // driveSegment(board, pinMap, s, state);
   }
 }
 
-// Hiển thị chuỗi 2 ký tự (chục, đơn vị)
-void displayString(const char* str) {
-  displayCharSafeSequence(0, str[0]); // Chữ số hàng chục (kênh 9-15)
-  displayCharSafeSequence(1, str[1]); // Chữ số hàng đơn vị (kênh 0-6)
+// Hàm chuẩn điều khiển riêng cho Board 0x40 (2 số giờ) và Board 0x41 (2 số phút)
+void displayDigitDirect(Adafruit_PWMServoDriver &board, uint8_t digitIndex, char c) {
+  uint8_t pattern = getCharPattern(c);
+  const uint8_t* pinMap = (digitIndex == 0) ? DIGIT_TENS_CH : DIGIT_UNITS_CH;
+
+  // Bước 1: Thu nét ngoài
+  for (uint8_t s = 0; s < 6; s++) {
+    uint8_t angle = ANGLE_OFF[s];
+    board.setPWM(pinMap[s], 0, angleToPulse(angle));
+  }
+  delay(50);
+
+  // Bước 2: Chỉnh nét g
+  bool state_g = (pattern >> 6) & 0x01;
+  board.setPWM(pinMap[6], 0, angleToPulse(state_g ? ANGLE_ON[6] : ANGLE_OFF[6]));
+  delay(50);
+
+  // Bước 3: Mở nét ngoài
+  for (uint8_t s = 0; s < 6; s++) {
+    bool state = (pattern >> s) & 0x01;
+    uint8_t angle = state ? ANGLE_ON[s] : ANGLE_OFF[s];
+    board.setPWM(pinMap[s], 0, angleToPulse(angle));
+  }
+}
+
+// Hiển thị toàn bộ 4 chữ số: HH:MM
+void displayTime4Digits(char h0, char h1, char m0, char m1) {
+  // Board 0x40 (Giờ)
+  displayDigitDirect(pwm1, 0, h0); // Chục giờ
+  delay(40);
+  displayDigitDirect(pwm1, 1, h1); // Đơn vị giờ
+  delay(40);
+
+  // Board 0x41 (Phút)
+  displayDigitDirect(pwm2, 0, m0); // Chục phút
+  delay(40);
+  displayDigitDirect(pwm2, 1, m1); // Đơn vị phút
 }
 
 void setup() {
   Serial.begin(115200);
   Wire.begin();
 
-  pwm.begin();
-  pwm.setPWMFreq(SERVO_FREQ);
+  // Khởi động RTC
+  if (!rtc.begin()) {
+    Serial.println("Khong tim thay RTC DS3231!");
+  } else if (rtc.lostPower()) {
+    // Đặt lại thời gian biên dịch nếu RTC mất nguồn
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
 
-  Serial.println("Khoi dong: Hang chuc (9-15), Hang don vi (0-6).");
-  Serial.println("Cau hinh goc: Net 2 va 5 mo o 180 do, cac net khac mo o 90 do. Tat ca dong o 0 do.");
+  // Khởi động 2 board PCA9685
+  pwm1.begin();
+  pwm1.setPWMFreq(SERVO_FREQ);
 
-  // Đóng toàn bộ về trạng thái ban đầu
-  displayString("  ");
+  pwm2.begin();
+  pwm2.setPWMFreq(SERVO_FREQ);
+
+  Serial.println("Khoi dong dong ho 4 so (0x40 va 0x41) hoan tat!");
+
+  // Đóng toàn bộ các nét lúc khởi động
+  displayTime4Digits(' ', ' ', ' ', ' ');
   delay(1000);
 }
 
 void loop() {
-  // Test dem so tu 00 den 99
-  for (int i = 0; i < 100; i++) {
-    char buf[3];
-    sprintf(buf, "%02d", i);
-    Serial.print("Hien thi: "); Serial.println(buf);
-    
-    displayString(buf);
-    delay(1200);
-  }
+  // Đọc thời gian thực từ RTC
+  DateTime now = rtc.now();
+  char h0 = (now.hour() / 10) + '0';
+  char h1 = (now.hour() % 10) + '0';
+  char m0 = (now.minute() / 10) + '0';
+  char m1 = (now.minute() % 10) + '0';
+
+  Serial.print("Thoi gian thuc: ");
+  Serial.print(h0); Serial.print(h1);
+  Serial.print(":");
+  Serial.print(m0); Serial.println(m1);
+
+  displayTime4Digits(h0, h1, m0, m1);
+
+  // Cập nhật mỗi 1 giây (hoặc có thể tăng lên 10-30 giây để servo đỡ phải quét liên tục nếu phút chưa đổi)
+  delay(1000); 
 }
